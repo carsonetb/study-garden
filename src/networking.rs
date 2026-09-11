@@ -1,9 +1,7 @@
-use bevy::reflect::list::List;
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use rand::{RngExt, rng};
 use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
-use std::marker::PhantomData;
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 
@@ -59,6 +57,7 @@ pub struct Server<S, C> {
     rc_sender: Sender<Connection>,
     sc_sender: Sender<Connection>,
     listener: TcpListener,
+    pub clients: Vec<ClientID>,
     // send: VecDeque<(ClientID, S)>,
     // received: VecDeque<(ClientID, C)>,
 }
@@ -96,13 +95,14 @@ where
         listener,
         rc_sender: listen_connection_sender,
         sc_sender: send_connection_sender,
+        clients: Vec::new(),
     });
 
     info!("Finished server setup.");
 }
 
 pub fn server_update<S, C>(
-    server: ResMut<Server<S, C>>,
+    mut server: ResMut<Server<S, C>>,
     mut network_mw: MessageWriter<NetworkMessage>,
     mut received_mw: MessageWriter<ReceiveMessage<C>>,
     mut send_mr: MessageReader<SendMessage<S>>,
@@ -123,6 +123,7 @@ pub fn server_update<S, C>(
         }
     }
 
+    let mut ids = Vec::new();
     for stream in server.listener.incoming() {
         if let Ok(stream) = stream {
             let id = ClientID(rng().random());
@@ -145,11 +146,13 @@ pub fn server_update<S, C>(
                 break;
             }
 
+            ids.push(id);
             network_mw.write(NetworkMessage::ClientConnect(id));
         } else {
             break;
         }
     }
+    server.clients.append(&mut ids);
 }
 
 pub fn server_listen<C>(
@@ -165,12 +168,18 @@ pub fn server_listen<C>(
             streams.push((connection.id, connection.stream));
         }
 
+        let mut remove = Vec::new();
         for (id, stream) in &mut streams {
             let mut len_buffer = [0u8; 4];
             if let Err(err) = stream.read_exact(&mut len_buffer) {
                 error!(
                     "Failed to read length of next message in TCP stream for client {id:?}. Error: {err}"
                 );
+                warn!(
+                    "It is assumed the client has disconnected. The connection will be closed on this thread, \
+                       however because the disconnection was not clean, this may not propogate."
+                );
+                remove.push(*id);
                 continue;
             }
             let len = u32::from_be_bytes(len_buffer) as usize;
@@ -197,6 +206,10 @@ pub fn server_listen<C>(
                 );
                 return;
             }
+        }
+
+        for id in remove {
+            streams.retain(|(compare, _)| &id != compare);
         }
     }
 }
@@ -259,18 +272,6 @@ pub struct Client<S, C> {
     pub id: Option<ClientID>,
     sender: Sender<SendMessage<C>>,
     receiver: Receiver<ReceiveMessage<S>>,
-    // send: VecDeque<C>,
-    // received: VecDeque<S>,
-}
-
-impl<S, C> Client<S, C> {
-    pub fn message(&self, message: C) -> SendMessage<C> {
-        SendMessage::new(
-            self.id
-                .expect("Identify must be sent before other messages."),
-            message,
-        )
-    }
 }
 
 pub fn client_setup<S, C>(mut commands: Commands)
@@ -301,6 +302,8 @@ where
         // send: VecDeque::new(),
         // received: VecDeque::new(),
     });
+
+    info!("Finished client setup.")
 }
 
 pub fn client_update<S, C>(

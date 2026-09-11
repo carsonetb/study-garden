@@ -1,5 +1,7 @@
-use bevy::prelude::*;
+use bevy::{prelude::*, tasks::AsyncComputeTaskPool};
+use bevy_defer::*;
 use bincode_next::{Decode, Encode};
+use crossbeam_channel::{Receiver, Sender, unbounded};
 
 use crate::networking::*;
 
@@ -17,6 +19,18 @@ pub enum ClientMessage {
 #[derive(Debug, Clone, Copy)]
 pub struct ServerPlugin;
 
+#[derive(Resource, Clone)]
+struct ServerAsyncEventsMain {
+    tx: Sender<ClientMessage>,
+    rx: Receiver<ClientMessage>,
+}
+
+#[derive(Resource, Clone)]
+struct ServerAsyncEventsThread {
+    tx: Sender<ClientMessage>,
+    rx: Receiver<ClientMessage>,
+}
+
 impl Plugin for ServerPlugin {
     fn build(&self, app: &mut App) {
         info!("Loading server plugin.");
@@ -32,12 +46,25 @@ impl Plugin for ServerPlugin {
                 hlserver_update,
             ),
         );
+
+        let (tx_thread, rx_main) = unbounded::<ClientMessage>();
+        let (tx_main, rx_thread) = unbounded::<ClientMessage>();
+        app.insert_resource(ServerAsyncEventsMain {
+            tx: tx_main,
+            rx: rx_main,
+        });
+        app.insert_resource(ServerAsyncEventsThread {
+            tx: tx_thread,
+            rx: rx_thread,
+        });
     }
 }
 
 fn hlserver_update(
     mut network_mr: MessageReader<NetworkMessage>,
     mut sender: MessageWriter<SendMessage<ServerMessage>>,
+    mut receiver: MessageReader<ReceiveMessage<ClientMessage>>,
+    events: Res<ServerAsyncEventsMain>,
 ) {
     for message in network_mr.read() {
         match message {
@@ -48,6 +75,37 @@ fn hlserver_update(
             _ => {}
         }
     }
+
+    for message in receiver.read() {
+        events.tx.send(message.message.clone());
+    }
+
+    while let Ok(message) = events.rx.try_recv() {
+        sender.write(SendMessage)
+    }
+}
+
+fn server_ping(rx: Res<ServerAsyncEvents>, server: Res<Server<ServerMessage, ClientMessage>>) {
+    let clients = server.clients.clone();
+    let rx = rx.0.clone();
+
+    AsyncComputeTaskPool::get().spawn(async move {}).detach();
+
+    // commands.spawn_task(async move || {
+    //     let clients = AsyncWorld
+    //         .resource::<Server<ServerMessage, ClientMessage>>()
+    //         .with(|server| server.clients.clone());
+
+    //     for client in clients {
+    //         AsyncWorld
+    //             .write_message(SendMessage::new(client, ServerMessage::Ping))
+    //             .unwrap();
+    //     }
+
+    //     let mut reader = AsyncWorld.next
+
+    //     Ok(())
+    // });
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -79,7 +137,7 @@ fn hlclient_update(
     for message in receiver.read() {
         match &message.message {
             &ServerMessage::Identify(id) => {
-                info!("This client has ID {id:?}");
+                info!("Setup received from server, this client has ID {id:?}");
                 client.id = Some(id);
             }
             &ServerMessage::Ping => {

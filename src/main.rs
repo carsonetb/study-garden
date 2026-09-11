@@ -1,6 +1,7 @@
 use std::env;
 
 use bevy::prelude::*;
+use bevy_defer::AsyncPlugin;
 
 mod hlnetwork;
 mod networking;
@@ -14,7 +15,7 @@ fn main() {
 
     let mut app = App::new();
 
-    app.add_plugins(DefaultPlugins);
+    app.add_plugins((DefaultPlugins, AsyncPlugin::default_settings()));
     if args.len() >= 2 && &args[1] == "server" {
         app.add_plugins(hlnetwork::ServerPlugin);
     } else {
