@@ -38,13 +38,13 @@ where
 {
     let Ok(write_stream) = TcpStream::connect("127.0.0.1:8000") else {
         error!(
-            "Failed to create a connection to the address 127.0.0.1:8080, the client will not be created."
+            "Failed to create a connection to the address 127.0.0.1:8000, the client will not be created."
         );
         return;
     };
     let read_stream = write_stream
         .try_clone()
-        .expect("Could not clone stream to address 127.0.0.1:8080.");
+        .expect("Could not clone stream to address 127.0.0.1:8000.");
 
     let (sender, thread_receiver) = channel::<SendMessage<C>>(16);
     let (thread_sender, receiver) = channel::<ReceiveMessage<S>>(16);

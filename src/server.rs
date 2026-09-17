@@ -1,6 +1,6 @@
 use rand::{RngExt, rng};
 use std::collections::{HashMap, VecDeque};
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread;
 use tokio::sync::broadcast::{Receiver, Sender, channel};
@@ -27,9 +27,9 @@ pub struct Server<S, C> {
     pub thread_sender: Sender<ReceiveMessage<C>>,
     /// Receive any message from any client from any thread.
     pub receiver: Receiver<ReceiveMessage<C>>,
-    pub intercom_sender: Sender<IntercomMessage>,
-    pub thread_intercom_sender: Sender<IntercomResponse>,
-    pub intercom_receiver: Receiver<IntercomResponse>,
+    intercom_sender: Sender<IntercomMessage>,
+    thread_intercom_sender: Sender<IntercomResponse>,
+    intercom_receiver: Receiver<IntercomResponse>,
     pub clients: Vec<ClientID>,
     // send: VecDeque<(ClientID, S)>,
     // received: VecDeque<(ClientID, C)>,
@@ -55,7 +55,6 @@ where
 {
     let listener =
         TcpListener::bind("127.0.0.1:8000").expect("Could not create TCP listener for server.");
-    listener.set_nonblocking(true).unwrap();
 
     // let Ok(write_stream) = TcpStream::connect("127.0.0.1:8000") else {
     //     error!(
@@ -130,6 +129,7 @@ pub fn server_update<S, C>(
     }
 
     let mut ids = Vec::new();
+    server.listener.set_nonblocking(true).unwrap();
     for stream in server.listener.incoming() {
         if let Ok(stream) = stream {
             let id = ClientID(rng().random());
@@ -160,7 +160,7 @@ pub fn server_update<S, C>(
     }
 }
 
-pub fn server_listen<C>(
+fn server_listen<C>(
     tx: Sender<ReceiveMessage<C>>,
     itx: Sender<IntercomResponse>,
     mut irx: Receiver<IntercomMessage>,
@@ -178,6 +178,10 @@ pub fn server_listen<C>(
         for (id, stream) in &mut streams {
             let mut len_buffer = [0u8; 4];
             if let Err(err) = stream.read_exact(&mut len_buffer) {
+                if err.kind() == io::ErrorKind::WouldBlock {
+                    continue;
+                }
+
                 error!(
                     "Failed to read length of next message in TCP stream for client {id:?}. Error: {err}"
                 );
@@ -218,7 +222,7 @@ pub fn server_listen<C>(
     }
 }
 
-pub fn server_send<S>(
+fn server_send<S>(
     mut rx: Receiver<SendMessage<S>>,
     mut itx: Sender<IntercomResponse>,
     mut irx: Receiver<IntercomMessage>,
